@@ -144,11 +144,13 @@ def get_scores_and_plot(scorer,
   act = activations.reshape(-1, activations.shape[-1])
   n_units = act.shape[1]
   # Get the rate-map for each unit
+  # i.e. which positions the unit fired most for.
   s = [
       scorer.calculate_ratemap(xy[:, 0], xy[:, 1], act[:, i])
       for i in range(n_units)
   ]
   # Get the scores
+  '''how grid-like is it'''
   score_60, score_90, max_60_mask, max_90_mask, sac = zip(
       *[scorer.get_scores(rate_map) for rate_map in s])
   # Separations

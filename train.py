@@ -25,7 +25,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfb
 import sys
-
+import time
 print(sys.path)
 print(sys.executable)
 #import Tkinter  # pylint: disable=unused-import
@@ -70,6 +70,8 @@ FLAGS = {
     'saver_results_directory':"results",
     'saver_eval_time':2
 }
+
+preprocess_time = 0
 
 
 def train():
@@ -161,6 +163,12 @@ def train():
     train_loss = tf.keras.metrics.Mean(name='train_loss')
     train_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(name='train_accuracy')
 
+
+    pos_xy = []
+    bottleneck = []
+    lstm_output = []
+
+    @tf.function
     def loss_function(targets, logits):
         pc_loss = tf.nn.softmax_cross_entropy_with_logits(
             labels=targets[0], logits=logits[0], name='pc_loss')
@@ -168,26 +176,28 @@ def train():
             labels=targets[1], logits=logits[1], name='hd_loss')
         total_loss = pc_loss + hd_loss
         return tf.reduce_mean(total_loss, name='train_loss')
-
-    def train_step(velocities, targets, logits):        
+    @tf.function
+    def train_step(velocities, targets, logits):   
+        global preprocess_time     
         with tf.GradientTape() as tape:
             predictions,_ = grid_cell_model(velocities, initial_conds, trainable=True)
             ensembles_logits, bottleneck, lstm_output = predictions
             loss = loss_function(targets, ensembles_logits)
-        
-        gradients = tape.gradient(loss, grid_cell_model.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, grid_cell_model.trainable_variables))
+        gradients = tape.gradient(loss, grid_cell_model.trainable_weights)
+
+        optimizer.apply_gradients(zip(gradients, grid_cell_model.trainable_weights))
         
         train_loss(loss)
         return {"bottleneck":bottleneck, "lstm_output":lstm_output, "pos_xy":target_pos}
-        
     for epoch in range(FLAGS['training_epochs']):
         loss_acc = list()
         res = dict()
         #for _ in range(FLAGS['training_steps_per_epoch']):
         train_loss.reset_states()
         for batch, train_trajectory in enumerate(dataset):
+            print(batch)
             '''some preprocessing that maybe should be done in the data_pipeline'''
+            start_time = time.time()
             init_pos = train_trajectory['init_pos']
             init_hd = train_trajectory['init_hd']
             ego_vel = train_trajectory['ego_vel']
@@ -202,11 +212,24 @@ def train():
             velocities = tf.concat(input_tensors, axis=2)
             initial_conds = utils.encode_initial_conditions(init_pos, init_hd, place_cell_ensembles, head_direction_ensembles)
             ensembles_targets = utils.encode_targets(target_pos, target_hd, place_cell_ensembles, head_direction_ensembles)
-            
             mb_res = train_step(velocities, ensembles_targets, initial_conds)
-            res = utils.concat_dict(res, mb_res)
-            if batch % 1000 == 0:
+            #res = utils.concat_dict(res, mb_res)
+
+            if batch % 1000 > 600:
+                pos_xy.append(mb_res['pos_xy'])
+                bottleneck.append(mb_res['bottleneck'])
+                lstm_output.append(mb_res['lstm_output'])
+
+            if batch % 1000 == 0 and batch != 0:
+                print(preprocess_time)
                 print('Epoch {}, batch {}, loss {}'.format(epoch, batch, train_loss.result()))
+                for i in range(len(pos_xy)):
+                    mb_res = {"bottleneck":bottleneck[i], "lstm_out":lstm_output[i], "pos_xy":pos_xy[i]}
+                    utils.concat_dict(res, mb_res)
+                pos_xy = []
+                bottleneck = []
+                lstm_output = []
+                mb_res = dict()
                 # Store at the end of validation
                 filename = 'rates_and_sac_latest_hd.pdf'
                 grid_scores['btln_60'], grid_scores['btln_90'], grid_scores[
@@ -214,6 +237,7 @@ def train():
                         'btln_90_separation'] = utils.get_scores_and_plot(
                             latest_epoch_scorer, res['pos_xy'], res['bottleneck'],
                             FLAGS['saver_results_directory'], filename)
+                res = dict()
             
 
 def main():
