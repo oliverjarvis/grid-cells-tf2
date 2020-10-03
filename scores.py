@@ -71,6 +71,8 @@ class GridScorer(object):
         out_val=np.nan)
 
   def calculate_ratemap(self, xs, ys, activations, statistic='mean'):
+    # We basically look at how often unit fired in the bottleneck for a certain position
+    # This visualizes as a field of positions where the more the unit activated for that bosition, the more red it is.
     return scipy.stats.binned_statistic_2d(
         xs,
         ys,

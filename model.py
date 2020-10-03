@@ -50,26 +50,27 @@ class MinimalRNNCell(layers.Layer):
       self.training = False
       self.state_size = (nh_lstm, nh_lstm)
       #defining layers
-      self.lstm = layers.LSTM(self._nh_lstm, return_state=True)
-      self.bottleneck = layers.Dense(self._nh_bottleneck,
+      self.lstm = layers.LSTMCell(units=self._nh_lstm, name="trash")
+      #self.lstm = layers.LSTM(self._nh_lstm, return_state=True)
+      self.bottleneck = layers.Dense(self._nh_bottleneck, name="bottleneck",
                                      use_bias=self._bottleneck_has_bias,
                                       kernel_regularizer=tf.keras.regularizers.L2(self._bottleneck_weight_decay))
       #ISSUE IS THIS https://stackoverflow.com/questions/52671481/why-are-variables-defined-with-self-automatically-given-a-listwrapper-while
       self.output_layers = []
       for ens in self._target_ensembles:
-        dense = layers.Dense(units=ens.n_cells, kernel_regularizer = tf.keras.regularizers.L2(self._bottleneck_weight_decay), kernel_initializer = displaced_linear_initializer(self._nh_bottleneck,self._init_weight_disp))
+        dense = layers.Dense(units=ens.n_cells, name="pc_logits", kernel_regularizer = tf.keras.regularizers.L2(self._bottleneck_weight_decay), kernel_initializer = displaced_linear_initializer(self._nh_bottleneck,self._init_weight_disp))
         self.output_layers.append(dense)
       
-      self.dropout = layers.Dropout(self._dropoutrates_bottleneck)
+      self.dropout = layers.Dropout(self._dropoutrates_bottleneck, name="dropout")
       #self.output_layers = [
       #for ens in self._target_ensembles]
       #self.output_layers = list(self.output_layers)
 
     def call(self, inputs, states):
       conc_inputs = tf.concat(inputs, axis=1)
-      lstm_inputs = conc_inputs[:, tf.newaxis, :]
-      lstm_output = self.lstm(lstm_inputs, initial_state=states)
-      next_state = lstm_output[1:]
+      lstm_inputs = conc_inputs
+      lstm_output = self.lstm(lstm_inputs, states=states)
+      next_state = lstm_output[1:][0]
       lstm_output = lstm_output[0]
       bottleneck = self.bottleneck(lstm_output)
       if self.training:
@@ -100,8 +101,8 @@ class GridCellNetwork(tf.keras.models.Model):
     self._bottleneck_has_bias = bottleneck_has_bias
     self._init_weight_disp = bottleneck_has_bias
 
-    self.init_lstm_state = layers.Dense(self._nh_lstm)
-    self.init_lstm_cell = layers.Dense(self._nh_lstm) 
+    self.init_lstm_state = layers.Dense(self._nh_lstm, name="state_init")
+    self.init_lstm_cell = layers.Dense(self._nh_lstm, name="cell_init") 
     self.rnn_core = MinimalRNNCell(
       target_ensembles = target_ensembles,
       nh_lstm = nh_lstm,
@@ -111,12 +112,13 @@ class GridCellNetwork(tf.keras.models.Model):
       bottleneck_has_bias=bottleneck_has_bias,
       init_weight_disp=init_weight_disp
     )
+    self.RNN = layers.RNN(return_state=True, return_sequences=True, cell=self.rnn_core)
 
   def call(self, velocities, initial_conditions, trainable=False):
     concat_initial = tf.concat(initial_conditions, axis=1)
     init_lstm_state = self.init_lstm_state(concat_initial)
     init_lstm_cell = self.init_lstm_cell(concat_initial)    
-    output_seq = layers.RNN(return_sequences=True, return_state=True, cell=self.rnn_core)((velocities,), initial_state=(init_lstm_state, init_lstm_cell))
+    output_seq = self.RNN((velocities,), initial_state=(init_lstm_state, init_lstm_cell))
     final_state = output_seq[-2:]
 
     output_seq = output_seq[0]
